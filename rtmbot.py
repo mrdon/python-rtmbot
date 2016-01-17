@@ -14,9 +14,49 @@ from argparse import ArgumentParser
 
 from slackclient import SlackClient
 
+import requests
+
+# These two lines enable debugging at httplib level (requests->urllib3->http.client)
+# You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+# The only thing missing will be the response.body which is not logged.
+try:
+    import http.client as http_client
+except ImportError:
+    # Python 2
+    import httplib as http_client
+http_client.HTTPConnection.debuglevel = 1
+
+# You must initialize logging, otherwise you'll not see debug output.
+logging.basicConfig() 
+logging.getLogger().setLevel(logging.DEBUG)
+requests_log = logging.getLogger("requests.packages.urllib3")
+requests_log.setLevel(logging.DEBUG)
+requests_log.propagate = True
+
 def dbg(debug_string):
     if debug:
         logging.info(debug_string)
+
+try:
+    # Try for Python3
+    from urllib.parse import urlencode 
+    from urllib.request import urlopen 
+except:
+    # Looks like Python2
+    from urllib import urlencode 
+    from urllib2 import urlopen 
+
+def patched_do(self, token, request="?", post_data={}, domain="172.17.0.1:8282"):
+    post_data["token"] = token
+    try:
+        post_data = urlencode(post_data)
+    except Exception as e:
+        logging.exception("blah")
+    url = 'http://{}/api/{}'.format(domain, request)
+    return urlopen(url, post_data.encode('utf-8'))
+
+from slackclient._slackrequest import SlackRequest
+SlackRequest.do = patched_do
 
 class RtmBot(object):
     def __init__(self, token):
@@ -33,7 +73,9 @@ class RtmBot(object):
         self.load_plugins()
         while True:
             for reply in self.slack_client.rtm_read():
+                time.sleep(2)
                 self.input(reply)
+                time.sleep(2)
             self.crons()
             self.output()
             self.autoping()
@@ -163,7 +205,8 @@ def main_loop():
     except KeyboardInterrupt:
         sys.exit(0)
     except:
-        logging.exception('OOPS')
+        import time
+        logging.exception('OOPS: {}'.format(time.time()))
 
 
 def parse_args():
@@ -185,14 +228,14 @@ if __name__ == "__main__":
                                 directory
                                 ))
 
-    config = yaml.load(file(args.config or 'rtmbot.conf', 'r'))
+    config = yaml.load(open(args.config or 'rtmbot.conf', 'r'))
     debug = config["DEBUG"]
     bot = RtmBot(config["SLACK_TOKEN"])
     site_plugins = []
     files_currently_downloading = []
     job_hash = {}
 
-    if config.has_key("DAEMON"):
+    if "DAEMON" in config:
         if config["DAEMON"]:
             import daemon
             with daemon.DaemonContext():
