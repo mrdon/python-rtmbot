@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import logging
+import errno
 from argparse import ArgumentParser
 
 from slackclient import SlackClient
@@ -72,10 +73,12 @@ class RtmBot(object):
         self.connect()
         self.load_plugins()
         while True:
-            for reply in self.slack_client.rtm_read():
-                time.sleep(2)
-                self.input(reply)
-                time.sleep(2)
+            try:
+                for reply in self.slack_client.rtm_read():
+                    self.input(reply)
+            except OSError as e:
+                if e.errno != errno.EAGAIN:
+                     raise
             self.crons()
             self.output()
             self.autoping()
@@ -98,12 +101,12 @@ class RtmBot(object):
             limiter = False
             for output in plugin.do_output():
                 channel = self.slack_client.server.channels.find(output[0])
-                if channel != None and output[1] != None:
+                if channel is not None and output[1] != None:
                     if limiter == True:
                         time.sleep(.1)
                         limiter = False
                     message = output[1].encode('ascii','ignore')
-                    channel.send_message("{}".format(message))
+                    channel.send_message("{}".format(message.decode('ascii')))
                     limiter = True
     def crons(self):
         for plugin in self.bot_plugins:
